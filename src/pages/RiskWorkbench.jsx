@@ -1,6 +1,7 @@
 // src/pages/RiskWorkbench.jsx
 import { useState, useEffect, useRef } from "react";
 import "../styles/workbench.css";
+import { mockBriefs } from "../data/mockBriefs";
 import {
   mockEvents,
   getSummaryStats,
@@ -258,11 +259,14 @@ function AiBriefTab({ event }) {
   const [done, setDone] = useState(false);
   const [generatedAt, setGeneratedAt] = useState(null);
   const [lastEventId, setLastEventId] = useState(null);
-  const abortRef = useRef(null);
+  const timeoutsRef = useRef([]);
 
   // Reset when event changes
   useEffect(() => {
     if (event.id !== lastEventId) {
+      // Cancel any in-progress typewriter
+      timeoutsRef.current.forEach(clearTimeout);
+      timeoutsRef.current = [];
       setOutput("");
       setDone(false);
       setGeneratedAt(null);
@@ -270,68 +274,42 @@ function AiBriefTab({ event }) {
     }
   }, [event.id]);
 
-  async function generate() {
-    if (abortRef.current) abortRef.current.abort();
-    const controller = new AbortController();
-    abortRef.current = controller;
+  function generate() {
+    // Cancel any previous run
+    timeoutsRef.current.forEach(clearTimeout);
+    timeoutsRef.current = [];
 
     setOutput("");
     setDone(false);
     setLoading(true);
 
-    try {
-      const res = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        signal: controller.signal,
-        headers: {
-          "Content-Type": "application/json",
-          "anthropic-dangerous-direct-browser-access": "true",
-        },
-        body: JSON.stringify({
-          model: "claude-sonnet-4-20250514",
-          max_tokens: 1000,
-          stream: true,
-          messages: [{ role: "user", content: buildPrompt(event) }],
-        }),
-      });
+    const brief = mockBriefs[event.id] ?? "No pre-generated brief available for this event.";
 
-      if (!res.ok) throw new Error(`API error ${res.status}`);
-
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-
-      while (true) {
-        const { done: streamDone, value } = await reader.read();
-        if (streamDone) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop();
-
-        for (const line of lines) {
-          if (!line.startsWith("data: ")) continue;
-          const data = line.slice(6).trim();
-          if (data === "[DONE]") continue;
-          try {
-            const parsed = JSON.parse(data);
-            if (parsed.type === "content_block_delta" && parsed.delta?.text) {
-              setOutput((prev) => prev + parsed.delta.text);
-            }
-          } catch {}
-        }
-      }
-
-      setDone(true);
-      setGeneratedAt(new Date().toISOString());
-    } catch (err) {
-      if (err.name !== "AbortError") {
-        setOutput("Error generating brief. Check your API key in the environment config.");
+    // Typewriter: reveal one character at a time
+    // Vary speed slightly for a natural feel
+    let i = 0;
+    function typeNext() {
+      if (i >= brief.length) {
+        setLoading(false);
         setDone(true);
+        setGeneratedAt(new Date().toISOString());
+        return;
       }
-    } finally {
-      setLoading(false);
+
+      // Chunk by word boundary for speed — reveal ~3 chars at a time
+      const chunk = brief.slice(i, i + 3);
+      setOutput((prev) => prev + chunk);
+      i += 3;
+
+      // Slightly longer pause at newlines for dramatic effect
+      const delay = brief[i] === "\n" ? 30 : 12;
+      const t = setTimeout(typeNext, delay);
+      timeoutsRef.current.push(t);
     }
+
+    // Small initial delay so the button state visibly changes first
+    const t = setTimeout(typeNext, 200);
+    timeoutsRef.current.push(t);
   }
 
   // Render markdown-lite: ### headings and bullet points
@@ -341,7 +319,7 @@ function AiBriefTab({ event }) {
       if (line.startsWith("### ")) {
         return <h3 key={i}>{line.slice(4)}</h3>;
       }
-      if (line.startsWith("- ")) {
+      if (line.startsWith("• ") || line.startsWith("- ")) {
         return <p key={i}>• {line.slice(2)}</p>;
       }
       if (line.trim() === "") return <br key={i} />;
@@ -379,6 +357,7 @@ function AiBriefTab({ event }) {
     </div>
   );
 }
+
 
 // ─── Timeline tab ──────────────────────────────────────────────────────────
 
