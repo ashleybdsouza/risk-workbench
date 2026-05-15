@@ -1,13 +1,13 @@
 // src/pages/RiskWorkbench.jsx
 import { useState, useEffect, useRef } from "react";
 import "../styles/workbench.css";
-import { mockBriefs } from "../data/mockBriefs";
 import {
   mockEvents,
   getSummaryStats,
   EVENT_TYPES,
   STATUS,
 } from "../data/mockEvents";
+import { mockBriefs } from "../data/mockBriefs";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────
 
@@ -27,13 +27,14 @@ function formatDateTime(iso) {
   return `${formatDate(iso)} ${formatTime(iso)}`;
 }
 
-function riskClass(level) {
-  return `wb-risk--${level}`;
+function formatTimeShort(iso) {
+  return new Date(iso).toLocaleTimeString("en-US", {
+    hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: true,
+  });
 }
 
-function scoreClass(level) {
-  return `wb-score-value--${level}`;
-}
+function riskClass(level) { return `wb-risk--${level}`; }
+function scoreClass(level) { return `wb-score-value--${level}`; }
 
 // ─── Sub-components ────────────────────────────────────────────────────────
 
@@ -70,7 +71,8 @@ function TypeBadge({ type }) {
 
 // ─── Worklist card ─────────────────────────────────────────────────────────
 
-function EventCard({ event, selected, onClick }) {
+function EventCard({ event, selected, onClick, overrideStatus }) {
+  const status = overrideStatus ?? event.status;
   return (
     <div
       className={`wb-event-card ${selected ? "selected" : ""}`}
@@ -79,7 +81,7 @@ function EventCard({ event, selected, onClick }) {
       <div className="wb-event-card-top">
         <div className="wb-event-card-badges">
           <TypeBadge type={event.type} />
-          <StatusBadge status={event.status} />
+          <StatusBadge status={status} />
         </div>
         <RiskPill level={event.riskLevel} score={event.riskScore} />
       </div>
@@ -112,12 +114,10 @@ function CollapsibleRaw({ title, data }) {
 }
 
 function OverviewTab({ event }) {
-  const { customer, signals, riskLevel, plaidData, transunionData, internalData } = event;
-
+  const { customer, signals, plaidData, transunionData, internalData } = event;
   return (
     <div className="wb-tab-content">
       <div className="wb-overview-grid">
-        {/* Left col — signals */}
         <div>
           <div className="wb-panel">
             <div className="wb-panel-header">
@@ -137,24 +137,21 @@ function OverviewTab({ event }) {
               ))}
             </div>
           </div>
-
-          {/* Raw data collapsibles */}
           <CollapsibleRaw title="Plaid Data" data={plaidData} />
           <CollapsibleRaw title="TransUnion Data" data={transunionData} />
           <CollapsibleRaw title="Internal Data" data={internalData} />
         </div>
 
-        {/* Right col — customer info */}
         <div>
           <div className="wb-panel">
             <div className="wb-panel-header">Customer</div>
             <div className="wb-info-list">
               {[
-                ["ID",         customer.id],
-                ["Email",      customer.email],
-                ["Phone",      customer.phone],
-                ["Acct Age",   customer.accountAge],
-                ["KYC",        customer.kycStatus],
+                ["ID",       customer.id],
+                ["Email",    customer.email],
+                ["Phone",    customer.phone],
+                ["Acct Age", customer.accountAge],
+                ["KYC",      customer.kycStatus],
               ].map(([k, v]) => (
                 <div className="wb-info-row" key={k}>
                   <span className="wb-info-key">{k}</span>
@@ -189,11 +186,11 @@ function OverviewTab({ event }) {
               <div className="wb-panel-header">Internal</div>
               <div className="wb-info-list">
                 {[
-                  ["Prior Flags",    internalData.previousFlags],
-                  ["Devices Seen",   internalData.devicesSeen],
-                  ["Linked Accts",   internalData.linkedAccounts],
-                  ["Failed Logins",  internalData.failedLoginAttempts],
-                  ["Chargebacks",    internalData.chargebackHistory],
+                  ["Prior Flags",   internalData.previousFlags],
+                  ["Devices Seen",  internalData.devicesSeen],
+                  ["Linked Accts",  internalData.linkedAccounts],
+                  ["Failed Logins", internalData.failedLoginAttempts],
+                  ["Chargebacks",   internalData.chargebackHistory],
                   ...(internalData.vpnDetected !== undefined
                     ? [["VPN Detected", internalData.vpnDetected ? "Yes" : "No"]]
                     : []),
@@ -214,57 +211,16 @@ function OverviewTab({ event }) {
 
 // ─── AI Brief tab ──────────────────────────────────────────────────────────
 
-function buildPrompt(event) {
-  return `You are a senior fraud analyst AI assistant. Analyze the following risk event and produce a structured analyst brief.
-
-EVENT SUMMARY:
-- Event ID: ${event.id}
-- Type: ${event.type === "transaction" ? "Transaction" : "Onboarding"}
-- Customer: ${event.customer.name} (${event.customer.email})
-- Account Age: ${event.customer.accountAge}
-- KYC Status: ${event.customer.kycStatus}
-- Risk Score: ${event.riskScore}/100
-- Risk Level: ${event.riskLevel.toUpperCase()}
-- Status: ${event.status}
-
-RISK SIGNALS DETECTED:
-${event.signals.map((s) => `- [${s.severity.toUpperCase()}] ${s.label}: ${s.detail} (Source: ${s.source})`).join("\n")}
-
-TRANSUNION SUMMARY:
-${event.transunionData ? `Credit Score: ${event.transunionData.creditScore ?? "N/A"}, Utilization: ${event.transunionData.utilization}, Inquiries (90d): ${event.transunionData.inquiriesLast90Days}, Thin File: ${event.transunionData.thin}, Oldest Account: ${event.transunionData.oldestAccount}` : "Not available (onboarding — no linked account yet)"}
-
-INTERNAL DATA:
-${event.internalData ? `Prior Flags: ${event.internalData.previousFlags}, Devices Seen: ${event.internalData.devicesSeen}, Linked Accounts: ${event.internalData.linkedAccounts}, Failed Logins: ${event.internalData.failedLoginAttempts}, VPN Detected: ${event.internalData.vpnDetected ?? "N/A"}` : "N/A"}
-
-Produce a concise analyst brief with EXACTLY these four sections, using these exact headings:
-
-### Why It Was Flagged
-2-3 sentences. Be specific — reference the actual signals and data points. Explain what pattern or combination of signals drove the score.
-
-### Recommended Action
-1-2 sentences. Be direct. Tell the analyst exactly what to do next (e.g. freeze account, request step-up verification, escalate to fraud team, monitor, approve).
-
-### Confidence Assessment
-1 sentence. State your confidence level (High / Medium / Low) and briefly explain why (e.g. strength of signal corroboration, data availability).
-
-### What To Look For Next
-2-4 bullet points. Specific things the analyst should investigate or watch for in the next 24-48 hours.
-
-Be concise, clinical, and direct. This is an operational tool — no preamble, no disclaimers.`;
-}
-
 function AiBriefTab({ event }) {
-  const [output, setOutput] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [done, setDone] = useState(false);
+  const [output, setOutput]           = useState("");
+  const [loading, setLoading]         = useState(false);
+  const [done, setDone]               = useState(false);
   const [generatedAt, setGeneratedAt] = useState(null);
   const [lastEventId, setLastEventId] = useState(null);
-  const timeoutsRef = useRef([]);
+  const timeoutsRef                   = useRef([]);
 
-  // Reset when event changes
   useEffect(() => {
     if (event.id !== lastEventId) {
-      // Cancel any in-progress typewriter
       timeoutsRef.current.forEach(clearTimeout);
       timeoutsRef.current = [];
       setOutput("");
@@ -275,19 +231,15 @@ function AiBriefTab({ event }) {
   }, [event.id]);
 
   function generate() {
-    // Cancel any previous run
     timeoutsRef.current.forEach(clearTimeout);
     timeoutsRef.current = [];
-
     setOutput("");
     setDone(false);
     setLoading(true);
 
     const brief = mockBriefs[event.id] ?? "No pre-generated brief available for this event.";
-
-    // Typewriter: reveal one character at a time
-    // Vary speed slightly for a natural feel
     let i = 0;
+
     function typeNext() {
       if (i >= brief.length) {
         setLoading(false);
@@ -295,33 +247,23 @@ function AiBriefTab({ event }) {
         setGeneratedAt(new Date().toISOString());
         return;
       }
-
-      // Chunk by word boundary for speed — reveal ~3 chars at a time
       const chunk = brief.slice(i, i + 3);
       setOutput((prev) => prev + chunk);
       i += 3;
-
-      // Slightly longer pause at newlines for dramatic effect
       const delay = brief[i] === "\n" ? 30 : 12;
       const t = setTimeout(typeNext, delay);
       timeoutsRef.current.push(t);
     }
 
-    // Small initial delay so the button state visibly changes first
     const t = setTimeout(typeNext, 200);
     timeoutsRef.current.push(t);
   }
 
-  // Render markdown-lite: ### headings and bullet points
   function renderOutput(text) {
     if (!text) return null;
     return text.split("\n").map((line, i) => {
-      if (line.startsWith("### ")) {
-        return <h3 key={i}>{line.slice(4)}</h3>;
-      }
-      if (line.startsWith("• ") || line.startsWith("- ")) {
-        return <p key={i}>• {line.slice(2)}</p>;
-      }
+      if (line.startsWith("### ")) return <h3 key={i}>{line.slice(4)}</h3>;
+      if (line.startsWith("• ") || line.startsWith("- ")) return <p key={i}>• {line.slice(2)}</p>;
       if (line.trim() === "") return <br key={i} />;
       return <p key={i}>{line}</p>;
     });
@@ -358,7 +300,6 @@ function AiBriefTab({ event }) {
   );
 }
 
-
 // ─── Timeline tab ──────────────────────────────────────────────────────────
 
 function TimelineTab({ event }) {
@@ -378,22 +319,164 @@ function TimelineTab({ event }) {
   );
 }
 
+// ─── Analyst Actions panel ─────────────────────────────────────────────────
+
+function AnalystActionsPanel({ event, eventStatuses, onStatusChange, notes, onAddNote }) {
+  const [noteText, setNoteText] = useState("");
+  const [showHint, setShowHint] = useState(false);
+  const [shaking, setShaking]   = useState(false);
+  const textareaRef             = useRef(null);
+
+  const currentStatus = eventStatuses[event.id] ?? event.status;
+  const isActioned    = currentStatus === STATUS.RESOLVED || currentStatus === STATUS.ESCALATED;
+  const eventNotes    = notes[event.id] ?? [];
+
+  // Reset note input when switching events
+  useEffect(() => {
+    setNoteText("");
+    setShowHint(false);
+  }, [event.id]);
+
+  function requireNote() {
+    if (!noteText.trim()) {
+      setShowHint(true);
+      setShaking(true);
+      textareaRef.current?.focus();
+      setTimeout(() => setShaking(false), 400);
+      return false;
+    }
+    return true;
+  }
+
+  function handleResolve() {
+    if (!requireNote()) return;
+    onAddNote(event.id, noteText.trim(), "resolved");
+    onStatusChange(event.id, STATUS.RESOLVED);
+    setNoteText("");
+    setShowHint(false);
+  }
+
+  function handleEscalate() {
+    if (!requireNote()) return;
+    onAddNote(event.id, noteText.trim(), "escalated");
+    onStatusChange(event.id, STATUS.ESCALATED);
+    setNoteText("");
+    setShowHint(false);
+  }
+
+  function handleSaveNote() {
+    if (!noteText.trim()) return;
+    onAddNote(event.id, noteText.trim(), "note");
+    setNoteText("");
+  }
+
+  return (
+    <div className="wb-actions-panel">
+      <div className="wb-actions-header">
+        Analyst Actions · {event.id}
+      </div>
+
+      {/* Notes log */}
+      {eventNotes.length > 0 && (
+        <div className="wb-notes-log">
+          {eventNotes.map((note, i) => (
+            <div
+              key={i}
+              className={`wb-note-entry ${note.type !== "note" ? "wb-note-entry--action" : ""}`}
+            >
+              <span className="wb-note-entry-meta">{formatTimeShort(note.timestamp)}</span>
+              <span className="wb-note-entry-text">
+                {note.type === "resolved"  && "✓ Resolved — "}
+                {note.type === "escalated" && "↑ Escalated — "}
+                {note.text}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Actioned badge */}
+      {isActioned && (
+        <div className={`wb-actioned-badge wb-actioned-badge--${currentStatus}`}>
+          {currentStatus === STATUS.RESOLVED  && "✓ Resolved"}
+          {currentStatus === STATUS.ESCALATED && "↑ Escalated to fraud team"}
+          <span style={{ fontWeight: 400, opacity: 0.7, marginLeft: 6 }}>
+            — add further notes above
+          </span>
+        </div>
+      )}
+
+      {/* Input + buttons */}
+      <div className="wb-actions-row">
+        <div className="wb-note-input-wrap">
+          <textarea
+            ref={textareaRef}
+            className={`wb-note-input ${shaking ? "required-shake" : ""}`}
+            placeholder={
+              isActioned
+                ? "Add a follow-up note..."
+                : "Add a note — required before resolving or escalating..."
+            }
+            value={noteText}
+            onChange={(e) => {
+              setNoteText(e.target.value);
+              if (e.target.value.trim()) setShowHint(false);
+            }}
+            rows={2}
+          />
+          <span className={`wb-note-required-hint ${showHint ? "visible" : ""}`}>
+            A note is required before taking action.
+          </span>
+        </div>
+
+        <div className="wb-action-buttons">
+          {!isActioned && (
+            <>
+              <button
+                className="wb-action-btn wb-action-btn--resolve"
+                onClick={handleResolve}
+              >
+                ✓ Resolve
+              </button>
+              <button
+                className="wb-action-btn wb-action-btn--escalate"
+                onClick={handleEscalate}
+              >
+                ↑ Escalate
+              </button>
+            </>
+          )}
+          <button
+            className="wb-action-btn wb-action-btn--save-note"
+            onClick={handleSaveNote}
+            disabled={!noteText.trim()}
+          >
+            + Note
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Detail panel ──────────────────────────────────────────────────────────
 
-function DetailPanel({ event }) {
+function DetailPanel({ event, eventStatuses, onStatusChange, notes, onAddNote }) {
   const [activeTab, setActiveTab] = useState("overview");
 
-  // Reset tab when event changes
   useEffect(() => { setActiveTab("overview"); }, [event.id]);
+
+  const currentStatus = eventStatuses[event.id] ?? event.status;
 
   return (
     <div className="wb-main" style={{ display: "flex", flexDirection: "column" }}>
+      {/* Detail header */}
       <div className="wb-detail-header">
         <div className="wb-detail-header-top">
           <div className="wb-detail-header-left">
             <div className="wb-detail-header-badges">
               <TypeBadge type={event.type} />
-              <StatusBadge status={event.status} />
+              <StatusBadge status={currentStatus} />
               <span className="wb-detail-id">{event.id}</span>
             </div>
             <div className="wb-detail-name">{event.customer.name}</div>
@@ -416,9 +499,9 @@ function DetailPanel({ event }) {
 
         <div className="wb-tabs">
           {[
-            { id: "overview",  label: "Overview" },
-            { id: "ai-brief",  label: "✦ AI Brief" },
-            { id: "timeline",  label: "Timeline" },
+            { id: "overview", label: "Overview" },
+            { id: "ai-brief", label: "✦ AI Brief" },
+            { id: "timeline", label: "Timeline" },
           ].map((tab) => (
             <button
               key={tab.id}
@@ -431,9 +514,21 @@ function DetailPanel({ event }) {
         </div>
       </div>
 
-      {activeTab === "overview"  && <OverviewTab event={event} />}
-      {activeTab === "ai-brief"  && <AiBriefTab event={event} />}
-      {activeTab === "timeline"  && <TimelineTab event={event} />}
+      {/* Tab content */}
+      <div style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column" }}>
+        {activeTab === "overview" && <OverviewTab event={event} />}
+        {activeTab === "ai-brief" && <AiBriefTab event={event} />}
+        {activeTab === "timeline" && <TimelineTab event={event} />}
+      </div>
+
+      {/* Actions panel — always visible at bottom */}
+      <AnalystActionsPanel
+        event={event}
+        eventStatuses={eventStatuses}
+        onStatusChange={onStatusChange}
+        notes={notes}
+        onAddNote={onAddNote}
+      />
     </div>
   );
 }
@@ -441,17 +536,39 @@ function DetailPanel({ event }) {
 // ─── Root component ────────────────────────────────────────────────────────
 
 export default function RiskWorkbench() {
-  const stats = getSummaryStats();
-  const [filter, setFilter] = useState("all");
-  const [search, setSearch] = useState("");
-  const [selectedId, setSelectedId] = useState(null);
-  const [now, setNow] = useState(new Date());
+  const stats                             = getSummaryStats();
+  const [filter, setFilter]               = useState("all");
+  const [search, setSearch]               = useState("");
+  const [selectedId, setSelectedId]       = useState(null);
+  const [now, setNow]                     = useState(new Date());
+  const [eventStatuses, setEventStatuses] = useState({});
+  const [notes, setNotes]                 = useState({});
 
   // Live clock
   useEffect(() => {
     const t = setInterval(() => setNow(new Date()), 1000);
     return () => clearInterval(t);
   }, []);
+
+  function handleStatusChange(eventId, newStatus) {
+    setEventStatuses((prev) => ({ ...prev, [eventId]: newStatus }));
+  }
+
+  function handleAddNote(eventId, text, type) {
+    const entry = { text, type, timestamp: new Date().toISOString() };
+    setNotes((prev) => ({
+      ...prev,
+      [eventId]: [...(prev[eventId] ?? []), entry],
+    }));
+  }
+
+  // Live stats reflecting session overrides
+  const liveStats = {
+    ...stats,
+    pending:   mockEvents.filter((e) => (eventStatuses[e.id] ?? e.status) === STATUS.PENDING).length,
+    inReview:  mockEvents.filter((e) => (eventStatuses[e.id] ?? e.status) === STATUS.IN_REVIEW).length,
+    escalated: mockEvents.filter((e) => (eventStatuses[e.id] ?? e.status) === STATUS.ESCALATED).length,
+  };
 
   const filtered = mockEvents.filter((e) => {
     if (filter === "txn" && e.type !== EVENT_TYPES.TRANSACTION) return false;
@@ -484,23 +601,23 @@ export default function RiskWorkbench() {
 
         <div className="wb-stats-bar">
           <div className="wb-stat wb-stat--total">
-            <span className="wb-stat-value">{stats.totalFlagged}</span>
+            <span className="wb-stat-value">{liveStats.totalFlagged}</span>
             <span className="wb-stat-label">Flagged</span>
           </div>
           <div className="wb-stat wb-stat--critical">
-            <span className="wb-stat-value">{stats.critical}</span>
+            <span className="wb-stat-value">{liveStats.critical}</span>
             <span className="wb-stat-label">Critical</span>
           </div>
           <div className="wb-stat wb-stat--pending">
-            <span className="wb-stat-value">{stats.pending}</span>
+            <span className="wb-stat-value">{liveStats.pending}</span>
             <span className="wb-stat-label">Pending</span>
           </div>
           <div className="wb-stat wb-stat--review">
-            <span className="wb-stat-value">{stats.inReview}</span>
+            <span className="wb-stat-value">{liveStats.inReview}</span>
             <span className="wb-stat-label">In Review</span>
           </div>
           <div className="wb-stat wb-stat--escalated">
-            <span className="wb-stat-value">{stats.escalated}</span>
+            <span className="wb-stat-value">{liveStats.escalated}</span>
             <span className="wb-stat-label">Escalated</span>
           </div>
         </div>
@@ -555,6 +672,7 @@ export default function RiskWorkbench() {
                   event={event}
                   selected={event.id === selectedId}
                   onClick={() => setSelectedId(event.id)}
+                  overrideStatus={eventStatuses[event.id]}
                 />
               ))
             )}
@@ -563,7 +681,13 @@ export default function RiskWorkbench() {
 
         {/* Main */}
         {selectedEvent ? (
-          <DetailPanel event={selectedEvent} />
+          <DetailPanel
+            event={selectedEvent}
+            eventStatuses={eventStatuses}
+            onStatusChange={handleStatusChange}
+            notes={notes}
+            onAddNote={handleAddNote}
+          />
         ) : (
           <div className="wb-main">
             <div className="wb-empty-state">
@@ -572,7 +696,6 @@ export default function RiskWorkbench() {
             </div>
           </div>
         )}
-
       </div>
     </div>
   );
